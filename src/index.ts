@@ -1,29 +1,43 @@
-import cheerio from 'cheerio';
+import parser from "@babel/parser";
+import { ArrayExpression, ExpressionStatement, StringLiteral } from "@babel/types";
+import cheerio from "cheerio";
+import { parseRawHistory, parseRawTime } from "./parsing";
 
-const convertTime = (time: string) => {
-  const [hours, minutes] = time.split(':').map(parseInt);
-  return hours * 60 + minutes;
-};
+export interface HistoryElement {
+  time: Date;
+  images: Record<string, number>;
+}
 
-export async function handleRequest(request: Request, env: Bindings) {
-  const team = new URL(request.url).pathname.substring(1);
+class HTTPError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
 
+async function getTeamInfo(team: string) {
   const url = new URL("http://scoreboard.uscyberpatriot.org/team.php");
   url.searchParams.set("team", team);
 
   const res = await fetch(url.toString());
 
+  if (!res.ok) {
+    throw new HTTPError(503, "Could not reach CyberPatriot scoreboard");
+  }
+
   const html = await res.text();
-  const $ = cheerio.load(html); 
+  const $ = cheerio.load(html);
 
   const table = $("body > div:nth-child(2) > div > table:nth-child(8)");
 
-  // parse table, columns are image, time, found, remaning, penalties, score, flags
+  if (!table) {
+    throw new HTTPError(404, "Team not found");
+  }
+
   const rows = table.find("tr").toArray().slice(1);
-  
-  const parsed = rows.map(row => ({
+
+  const images = rows.map((row) => ({
     name: $(row).find("td:nth-child(1)").text(),
-    time: convertTime($(row).find("td:nth-child(2)").text()),
+    runtime: parseRawTime($(row).find("td:nth-child(2)").text()),
     issues: {
       found: parseInt($(row).find("td:nth-child(3)").text()),
       remaining: parseInt($(row).find("td:nth-child(4)").text()),
@@ -32,13 +46,74 @@ export async function handleRequest(request: Request, env: Bindings) {
     score: parseInt($(row).find("td:nth-child(6)").text()),
     multiple: $(row).find("td:nth-child(7)").text().toUpperCase().includes("M"),
     overtime: $(row).find("td:nth-child(7)").text().toUpperCase().includes("T"),
-  }))
+  }));
 
-  const script = $("body > div:nth-child(2) > div > script").text()
+  const script = $("body > div:nth-child(2) > div > script").text();
 
-  return new Response(script, { status: 200 });
+  const regex = /arrayToDataTable\(((?:.|\s)+?)\)/g;
+
+  const matches = regex.exec(script);
+
+  let history: HistoryElement[] = [];
+
+  try {
+    if (matches) {
+      const parsed = parser.parse(matches[1]);
+
+      const arrays = (parsed.program.body[0] as ExpressionStatement).expression as ArrayExpression;
+
+      const data = arrays.elements.map((array) =>
+        (array as ArrayExpression).elements.map((element) => (element as StringLiteral).value),
+      );
+
+      history = parseRawHistory(data);
+    }
+  } catch {}
+
+  return { images, history };
+}
+
+export async function handleRequest(request: Request) {
+  try {
+    const url = new URL(request.url);
+
+    const path = url.pathname.substring(1);
+
+    if (path === "info") {
+      const teams = url.searchParams.get("teams")?.split(",") ?? [];
+
+      const data: Record<string, Awaited<ReturnType<typeof getTeamInfo>> | null> = Object.fromEntries(
+        await Promise.all(teams.map(async (team) => [team, await getTeamInfo(team).catch(() => null)])),
+      );
+
+      return new Response(JSON.stringify(data), {
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }
+
+    return new Response("Not found", {
+      status: 404,
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error instanceof HTTPError) {
+        return new Response(error.message, {
+          status: error.status,
+        });
+      } else {
+        return new Response("Internal Error: " + error.message, {
+          status: 500,
+        });
+      }
+    } else {
+      return new Response("Internal Error", {
+        status: 500,
+      });
+    }
+  }
 }
 
 const worker: ExportedHandler<Bindings> = { fetch: handleRequest };
-
 export default worker;

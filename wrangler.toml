@@ -1,4 +1,4 @@
-name = "miniflare-typescript-esbuild-jest"
+name = "cyberpatriot-scoreboard"
 main = "dist/index.mjs"
 compatibility_date = "2022-05-28"
 compatibility_flags = []
