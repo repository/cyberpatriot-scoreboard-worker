@@ -27,19 +27,27 @@ export function parseRawHistory(rawHistory: unknown): HistoryElement[] {
     const [rawTime, ...counts] = e;
 
     const [dateString, timeString] = rawTime.toString().split(" ");
-    const [month, day] = dateString.split("/").map((n) => Number(n).toFixed(0).padStart(2, "0"));
-    const [hours, minutes] = timeString.split(":").map((n) => Number(n).toFixed(0).padStart(2, "0"));
+    const [month, day] = dateString.split("/").map((n) => Number(n));
+    const [hours, minutes] = timeString.split(":").map((n) => Number(n));
 
     const year = new Date().getFullYear();
 
-    const time = new Date(`${year}-${month}-${day}T${hours}:${minutes}:00.000Z`);
+    const time = new Date(Date.UTC(year, month - 1, day, hours, minutes));
 
     return {
-      time: time,
+      time,
       images: images.reduce((acc, image, i) => {
         acc[image] = counts[i] as number;
         return acc;
       }, {} as Record<string, number>),
     };
   });
+}
+
+export function parseRawDateTime(raw: string) {
+  const [date, time] = raw.split(" ");
+  const [year, month, day] = date.split("-").map(Number);
+  const [hours, minutes, seconds] = time.split(":").map(Number);
+
+  return new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds));
 }

@@ -1,7 +1,7 @@
 import parser from "@babel/parser";
 import { ArrayExpression, ExpressionStatement, StringLiteral } from "@babel/types";
 import cheerio from "cheerio";
-import { parseRawHistory, parseRawTime } from "./parsing";
+import { parseRawDateTime, parseRawHistory, parseRawTime } from "./parsing";
 
 export interface HistoryElement {
   time: Date;
@@ -70,7 +70,9 @@ async function getTeamInfo(team: string) {
     }
   } catch {}
 
-  return { images, history };
+  const updated = parseRawDateTime($("body > div:nth-child(2) > div > h2:nth-child(3)").text().substring(14, 33));
+
+  return { images, history, updated };
 }
 
 export async function handleRequest(request: Request) {
@@ -101,6 +103,9 @@ export async function handleRequest(request: Request) {
       if (error instanceof HTTPError) {
         return new Response(error.message, {
           status: error.status,
+          headers: {
+            "access-control-allow-origin": "*",
+          },
         });
       } else {
         return new Response("Internal Error: " + error.message, {
@@ -115,5 +120,13 @@ export async function handleRequest(request: Request) {
   }
 }
 
-const worker: ExportedHandler<Bindings> = { fetch: handleRequest };
+const setCors = (response: Response) => {
+  response.headers.set("Access-Control-Allow-Origin", "*");
+  response.headers.set("Access-Control-Allow-Methods", "*");
+  response.headers.set("Access-Control-Allow-Headers", "*");
+
+  return response;
+};
+
+const worker: ExportedHandler<Bindings> = { fetch: async (request) => setCors(await handleRequest(request)) };
 export default worker;
